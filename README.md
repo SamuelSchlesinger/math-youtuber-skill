@@ -35,21 +35,25 @@ pip install manim f5-tts-mlx soundfile
 
 ```
 project/
-├── script.md              # single source of truth
-├── generate_narration.py  # f5-tts batch generation with explicit durations
-├── timed_scenes.py        # manim scenes, one class per segment
-├── voiceover.sh           # record yourself, composite, check durations
-├── clips/                 # audio
-│   ├── my_voice_ref.wav       # raw mic recording
-│   ├── my_voice_ref_24k.wav   # resampled for f5-tts
-│   ├── 01_intro.wav           # generated narration segments
-│   ├── vo_01_intro.wav        # voiceover recordings (optional)
+├── script.md                  # single source of truth
+├── generate_narration.py      # f5-tts batch generation with explicit durations
+├── timed_scenes.py            # manim scenes, one class per segment (landscape)
+├── timed_scenes_shorts.py     # same scenes adapted for 9:16 vertical
+├── voiceover.sh               # record yourself, composite, check durations
+├── clips/                     # audio
+│   ├── my_voice_ref.wav           # raw mic recording
+│   ├── my_voice_ref_24k.wav       # resampled for f5-tts
+│   ├── 01_intro.wav               # generated narration segments
+│   ├── vo_01_intro.wav            # voiceover recordings (optional)
 │   └── ...
-├── output/                # final product
-│   ├── segments/              # individual composited segments
-│   └── final.mp4              # the final video
-├── media/                 # manim output (auto-generated)
-└── .venv/                 # python virtual environment
+├── output/                    # final product
+│   ├── segments/                  # individual composited segments
+│   ├── final.mp4                  # the final video
+│   └── shorts/                    # shorts version (1080x1920)
+│       ├── segments/
+│       └── final_shorts.mp4
+├── media/                     # manim output (auto-generated)
+└── .venv/                     # python virtual environment
 ```
 
 ## end-to-end pipeline
@@ -206,6 +210,33 @@ done
 #   -qk  4K/60fps     4K final
 ```
 
+### step 5b: render shorts animations (optional)
+
+create `timed_scenes_shorts.py` adapted for the 9:16 vertical frame. the template is scaffolded for you — adapt each scene from `timed_scenes.py` with these changes:
+
+```bash
+# render all shorts scenes — NOTE: -r takes height,width (not width,height!)
+for scene in S01_Intro S02_Concept S03_Detail; do
+    manim render -r 1080,1920 --fps 60 -qh timed_scenes_shorts.py "$scene"
+done
+```
+
+**key layout differences from landscape:**
+
+| property | landscape (16:9) | shorts (9:16) |
+|----------|-----------------|---------------|
+| frame width | ~14.2 units | ~4.5 units |
+| frame height | 8 units | 8 units |
+| font sizes | 48-96 | 72-192 (~2x) |
+| horizontal layout | side-by-side ok | stack vertically |
+| vertical spacing | 0.6-0.8 buff | 0.8-1.0 buff (large text needs room) |
+
+**common pitfalls:**
+- `-r` flag is **height,width** not width,height — `-r 1080,1920` gives 1080w x 1920h
+- wide equations (e.g. `\gcd(\alpha, \beta) = 1`) may overflow — split across lines or reduce font size
+- elements placed with `LEFT * 2` / `RIGHT * 2` are near the frame edge (frame is only ±2.25 wide)
+- test with `-ql` first — vertical rendering is the same speed as landscape
+
 ### step 6: record voiceover (optional)
 
 ```bash
@@ -227,11 +258,11 @@ voiceover files (`vo_*.wav`) take priority over TTS during compositing. only re-
 ### step 7: composite and concatenate
 
 ```bash
-# composite with whatever audio exists (prefers voiceover > TTS)
+# composite landscape with whatever audio exists (prefers voiceover > TTS)
 ./voiceover.sh composite
 
-# or for TTS-only compositing without loudnorm:
-# bash composite.sh
+# composite shorts (uses same audio, different video from timed_scenes_shorts)
+./voiceover.sh composite-shorts
 ```
 
 the composite step:
@@ -303,6 +334,14 @@ self.play(obj.animate.set_fill(GREEN, opacity=0.8))         # color change
 - **re-encode at both stages** — per-segment and final concat. `-c copy` causes playback freezing
 - **tpad for audio > video** — `tpad=stop_mode=clone:stop_duration=N` freezes last frame. do NOT use `-stream_loop`
 - **2-pass loudnorm for YouTube** — measure first, then encode with measured values + `linear=true`
+
+### shorts (9:16 vertical)
+- **`-r` is height,width** — `manim render -r 1080,1920` gives 1080w x 1920h. getting this backwards gives landscape at a weird resolution
+- **double your font sizes** — phone screens are small. text that's readable at 48pt on a laptop needs ~96pt for shorts
+- **stack, don't spread** — the frame is only ~4.5 units wide. anything side-by-side in landscape should be stacked vertically
+- **increase vertical spacing** — larger text takes more room. use `buff=0.8-1.0` instead of `0.6-0.8`
+- **watch for overlap** — fractions (`\frac{}{}`) are tall. increase `UP/DOWN` shifts between equations
+- **same audio, different video** — `composite-shorts` reuses the same TTS/voiceover clips with the shorts-rendered video
 
 ### workflow
 - **iterate at 8 steps / `-ql`** — 5-10x faster than production. check timing before committing

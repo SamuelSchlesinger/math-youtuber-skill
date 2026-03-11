@@ -236,6 +236,65 @@ class S01_Intro(Scene):
         self.wait(max(d - elapsed, 0.1))
 PYEOF
 
+# ── timed_scenes_shorts.py ───────────────────────────────────
+cat > "$PROJECT_DIR/timed_scenes_shorts.py" << 'PYEOF'
+"""Manim scenes for YouTube Shorts (1080x1920, 9:16 vertical).
+
+Adapted from timed_scenes.py with layout adjustments for the
+narrower vertical frame (frame_width ≈ 4.5 units).
+
+Key differences from landscape:
+- Font sizes ~2x larger (phones are small screens)
+- Stack elements vertically instead of side-by-side
+- More vertical spacing between equations (large text needs room)
+- Reduce horizontal offsets (frame is only ~4.5 units wide)
+
+Render with:  manim render -r 1080,1920 --fps 60 -qh timed_scenes_shorts.py SceneName
+NOTE: -r takes height,width (not width,height!)
+"""
+
+from manim import *
+
+# ── colour palette ────────────────────────────────────────────
+BG = "#1a1a2e"
+GREEN = "#4ade80"
+RED = "#f87171"
+BLUE = "#60a5fa"
+YELLOW = "#facc15"
+WHITE = "#e2e8f0"
+
+# ── durations (seconds) ──────────────────────────────────────
+# keep in sync with generate_narration.py SEGMENTS and voiceover.sh
+DUR = {
+    "intro": 6.0,
+    # "concept": 12.0,
+}
+
+
+class S01_Intro(Scene):
+    """opening line goes here. | second phrase. | third phrase."""
+
+    def setup(self):
+        self.camera.background_color = BG
+
+    def construct(self):
+        d = DUR["intro"]
+        elapsed = 0
+
+        # "opening line goes here" — title appears with the words
+        # NOTE: ~2x font sizes vs landscape for phone readability
+        title = Text("Title", font_size=144, color=WHITE)
+        self.play(FadeIn(title), run_time=0.8)
+        elapsed += 0.8
+
+        # "second phrase" — hold, then animate when phrase lands ~2.5s
+        self.wait(1.7)
+        elapsed += 1.7
+        # ... next animation here ...
+
+        self.wait(max(d - elapsed, 0.1))
+PYEOF
+
 # ── voiceover.sh ──────────────────────────────────────────────
 SLUG=$(echo "$TITLE" | tr '[:upper:]' '[:lower:]' | tr ' ' '_' | tr -cd 'a-z0-9_')
 cat > "$PROJECT_DIR/voiceover.sh" << SHEOF
@@ -505,6 +564,119 @@ do_composite() {
 }
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# composite-shorts (1080x1920 vertical)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+do_composite_shorts() {
+    # find shorts video directory
+    SHORTS_VIDEO=""
+    for q in 1920p60 1920p30 1920p15; do
+        if [ -d "\$BASE/media/videos/timed_scenes_shorts/\$q" ]; then
+            SHORTS_VIDEO="\$BASE/media/videos/timed_scenes_shorts/\$q"
+            break
+        fi
+    done
+    if [ -z "\$SHORTS_VIDEO" ]; then
+        echo "ERROR: no shorts videos found."
+        echo "  render first: manim render -r 1080,1920 --fps 60 -qh timed_scenes_shorts.py SceneName"
+        echo "  NOTE: -r takes height,width (not width,height!)"
+        exit 1
+    fi
+
+    SHORTS_OUT="\$BASE/output/shorts"
+    mkdir -p "\$SHORTS_OUT/segments"
+
+    echo "=== compositing shorts segments ==="
+    echo "  source: \$SHORTS_VIDEO"
+
+    for entry in "\${SEGMENTS[@]}"; do
+        IFS=: read -r num scene audio desc <<< "\$entry"
+        local video_file="\$SHORTS_VIDEO/\${scene}.mp4"
+        local vo_file="\$CLIPS/vo_\${audio}.wav"
+        local tts_file="\$CLIPS/\${audio}.wav"
+        local output_file="\$SHORTS_OUT/segments/seg_\${num}.mp4"
+
+        # prefer voiceover, fall back to TTS
+        if [ -f "\$vo_file" ]; then
+            audio_file="\$vo_file"
+            src="voice"
+        elif [ -f "\$tts_file" ]; then
+            audio_file="\$tts_file"
+            src="TTS"
+        else
+            echo "WARNING: no audio for segment \$num"
+            continue
+        fi
+
+        if [ ! -f "\$video_file" ]; then
+            echo "WARNING: missing video \$video_file"
+            continue
+        fi
+
+        echo "  \$num (\$scene + \$src)..."
+
+        adur=\$(ffprobe -v quiet -show_entries format=duration -of csv=p=0 "\$audio_file" 2>/dev/null)
+        vdur=\$(ffprobe -v quiet -show_entries format=duration -of csv=p=0 "\$video_file" 2>/dev/null)
+        longer=\$(python3 -c "print('audio' if float('\${adur}') > float('\${vdur}') + 0.5 else 'ok')")
+
+        if [ "\$longer" = "audio" ]; then
+            pad=\$(python3 -c "print(f'{float(\"\${adur}\") - float(\"\${vdur}\") + 0.5:.1f}')")
+            ffmpeg -y -i "\$video_file" -i "\$audio_file" \
+                -filter_complex "[0:v]tpad=stop_mode=clone:stop_duration=\${pad}[vout]" \
+                -map "[vout]" -map 1:a \
+                -c:v libx264 -preset fast -crf 18 -pix_fmt yuv420p \
+                -af "loudnorm=I=-16:TP=-1.5:LRA=11" \
+                -c:a aac -b:a 192k \
+                -shortest -movflags +faststart \
+                "\$output_file" 2>/dev/null
+        else
+            ffmpeg -y -i "\$video_file" -i "\$audio_file" \
+                -c:v libx264 -preset fast -crf 18 -pix_fmt yuv420p \
+                -af "loudnorm=I=-16:TP=-1.5:LRA=11" \
+                -c:a aac -b:a 192k \
+                -shortest -movflags +faststart \
+                "\$output_file" 2>/dev/null
+        fi
+    done
+
+    echo ""
+    echo "=== concatenating shorts video ==="
+
+    CONCAT_LIST="\$SHORTS_OUT/concat_list.txt"
+    > "\$CONCAT_LIST"
+    for entry in "\${SEGMENTS[@]}"; do
+        IFS=: read -r num scene audio desc <<< "\$entry"
+        echo "file 'segments/seg_\${num}.mp4'" >> "\$CONCAT_LIST"
+    done
+
+    echo "  pass 1: measuring loudness..."
+    LOUDNORM_STATS=\$(ffmpeg -y -f concat -safe 0 \
+        -i "\$CONCAT_LIST" \
+        -af loudnorm=I=-14:TP=-1:LRA=11:print_format=json \
+        -f null - 2>&1 | grep -A 20 '"input_')
+
+    INPUT_I=\$(echo "\$LOUDNORM_STATS" | grep input_i | sed 's/[^0-9.-]//g')
+    INPUT_TP=\$(echo "\$LOUDNORM_STATS" | grep input_tp | sed 's/[^0-9.-]//g')
+    INPUT_LRA=\$(echo "\$LOUDNORM_STATS" | grep input_lra | sed 's/[^0-9.-]//g')
+    INPUT_THRESH=\$(echo "\$LOUDNORM_STATS" | grep input_thresh | sed 's/[^0-9.-]//g')
+
+    echo "  measured: I=\${INPUT_I} LUFS, TP=\${INPUT_TP} dBTP, LRA=\${INPUT_LRA}"
+
+    echo "  pass 2: encoding with loudnorm..."
+    ffmpeg -y -f concat -safe 0 \
+        -i "\$CONCAT_LIST" \
+        -c:v libx264 -preset slow -crf 18 -pix_fmt yuv420p \
+        -af loudnorm=I=-14:TP=-1:LRA=11:measured_I=\${INPUT_I}:measured_TP=\${INPUT_TP}:measured_LRA=\${INPUT_LRA}:measured_thresh=\${INPUT_THRESH}:linear=true \
+        -c:a aac -b:a 192k \
+        -movflags +faststart \
+        "\$SHORTS_OUT/\${SLUG}_shorts.mp4" 2>/dev/null
+
+    echo ""
+    echo "=== done ==="
+    echo "shorts video: \$SHORTS_OUT/\${SLUG}_shorts.mp4"
+}
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # main
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -541,6 +713,9 @@ case "\${1:-}" in
     composite)
         do_composite
         ;;
+    composite-shorts)
+        do_composite_shorts
+        ;;
     durations)
         do_durations
         ;;
@@ -563,11 +738,12 @@ case "\${1:-}" in
         ;;
     *)
         echo "Usage:"
-        echo "  \$0 record          — record all segments (video autoplays)"
-        echo "  \$0 record 05       — record just segment 05"
-        echo "  \$0 durations       — compare voiceover vs video durations"
-        echo "  \$0 composite       — composite (prefers voiceover > TTS)"
-        echo "  \$0 play 05         — preview segment 05 video"
+        echo "  \$0 record              — record all segments (video autoplays)"
+        echo "  \$0 record 05           — record just segment 05"
+        echo "  \$0 durations           — compare voiceover vs video durations"
+        echo "  \$0 composite           — composite landscape (prefers voiceover > TTS)"
+        echo "  \$0 composite-shorts    — composite shorts (1080x1920 vertical)"
+        echo "  \$0 play 05             — preview segment 05 video"
         echo ""
         echo "Segments:"
         for entry in "\${SEGMENTS[@]}"; do
@@ -581,10 +757,11 @@ case "\${1:-}" in
         done
         echo ""
         echo "Workflow:"
-        echo "  1. ./voiceover.sh record       — record at your natural pace"
-        echo "  2. ./voiceover.sh durations    — see what needs longer animations"
+        echo "  1. ./voiceover.sh record            — record at your natural pace"
+        echo "  2. ./voiceover.sh durations         — see what needs longer animations"
         echo "  3. ask claude to adjust DUR + re-render"
-        echo "  4. ./voiceover.sh composite    — build final video"
+        echo "  4. ./voiceover.sh composite         — build final video"
+        echo "  5. ./voiceover.sh composite-shorts  — build shorts version (optional)"
         ;;
 esac
 SHEOF
@@ -598,7 +775,8 @@ echo ""
 echo "  $PROJECT_DIR/"
 echo "  ├── script.md              <- write your script here"
 echo "  ├── generate_narration.py  <- add segments + voice ref"
-echo "  ├── timed_scenes.py        <- one scene class per segment"
+echo "  ├── timed_scenes.py        <- one scene class per segment (landscape)"
+echo "  ├── timed_scenes_shorts.py <- same scenes adapted for 9:16 vertical"
 echo "  ├── voiceover.sh           <- record, composite, check durations"
 echo "  ├── clips/"
 echo "  ├── output/"
